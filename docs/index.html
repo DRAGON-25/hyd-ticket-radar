@@ -43,6 +43,7 @@
     <label>2. Select Theatres (Multi-Select)</label>
     <input type="text" id="theatreSearch" placeholder="Search AMB, Prasads, Sandhya..." />
     <div id="theatreList" class="scroll-box">Loading theatres...</div>
+    <div id="selectedTheatrePills" class="pill-wrap"></div>
   </div>
 
   <div class="card">
@@ -79,13 +80,25 @@
 
   let allTheatres = [];
   let allMovies = [];
-  const selectedTheatres = new Set();
+  const selectedTheatres = new Map(); // id (string) -> canonical_name
   const selectedMovies = new Set();
   const selectedDates = new Set();
 
+  function esc(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   function updateButton() {
-    const total = selectedTheatres.size * selectedMovies.size * selectedDates.size;
-    document.getElementById("submitBtn").textContent = `Start Watching (${total} combinations)`;
+    const t = selectedTheatres.size;
+    const m = selectedMovies.size;
+    const d = selectedDates.size;
+    const total = t * m * d;
+    document.getElementById("submitBtn").textContent =
+      `Start Watching (${total} combinations) • ${t}T × ${m}M × ${d}D`;
   }
 
   function renderTheatres(filter = "") {
@@ -93,14 +106,24 @@
     const q = filter.toLowerCase();
     box.innerHTML = allTheatres
       .filter(t => t.canonical_name.toLowerCase().includes(q))
-      .map(t => `
-        <label class="check-row">
-          <input type="checkbox" ${selectedTheatres.has(t.id) ? "checked" : ""}
-            onchange="toggleTheatre(${t.id}, this.checked)" />
-          <span>${t.canonical_name}</span>
-          <span class="badge">${t.source}</span>
-        </label>
-      `).join("") || "<div style='padding:8px;color:#94a3b8'>No matching theatres</div>";
+      .map(t => {
+        const idStr = String(t.id);
+        return `
+          <label class="check-row">
+            <input type="checkbox" data-id="${esc(idStr)}" data-name="${esc(t.canonical_name)}"
+              ${selectedTheatres.has(idStr) ? "checked" : ""} />
+            <span>${esc(t.canonical_name)}</span>
+            <span class="badge">${esc(t.source || "")}</span>
+          </label>
+        `;
+      }).join("") || "<div style='padding:8px;color:#94a3b8'>No matching theatres</div>";
+  }
+
+  function renderTheatrePills() {
+    const wrap = document.getElementById("selectedTheatrePills");
+    wrap.innerHTML = Array.from(selectedTheatres.entries()).map(([id, name]) =>
+      `<span class="pill">${esc(name)} <button type="button" data-remove-theatre="${esc(id)}">×</button></span>`
+    ).join("");
   }
 
   function renderMovies(filter = "") {
@@ -108,28 +131,20 @@
     const q = filter.toLowerCase();
     box.innerHTML = allMovies
       .filter(m => m.title.toLowerCase().includes(q))
-      .map(m => {
-        const safeTitle = m.title.replace(/'/g, "\\'");
-        return `
-          <label class="check-row">
-            <input type="checkbox" ${selectedMovies.has(m.title) ? "checked" : ""}
-              onchange="toggleMovie('${safeTitle}', this.checked)" />
-            <span>${m.title}</span>
-            <span class="badge">${m.status}</span>
-          </label>
-        `;
-      }).join("") || "<div style='padding:8px;color:#94a3b8'>No matching movies</div>";
+      .map(m => `
+        <label class="check-row">
+          <input type="checkbox" data-title="${esc(m.title)}"
+            ${selectedMovies.has(m.title) ? "checked" : ""} />
+          <span>${esc(m.title)}</span>
+          <span class="badge">${esc(m.status || "")}</span>
+        </label>
+      `).join("") || "<div style='padding:8px;color:#94a3b8'>No matching movies</div>";
   }
 
-  function toggleTheatre(id, isChecked) {
-    isChecked ? selectedTheatres.add(id) : selectedTheatres.delete(id);
-    updateButton();
-  }
-
-  function toggleMovie(title, isChecked) {
-    isChecked ? selectedMovies.add(title) : selectedMovies.delete(title);
-    renderMoviePills();
-    updateButton();
+  function renderMoviePills() {
+    document.getElementById("selectedMoviePills").innerHTML = Array.from(selectedMovies).map(m =>
+      `<span class="pill">${esc(m)} <button type="button" data-remove-movie="${esc(m)}">×</button></span>`
+    ).join("");
   }
 
   function addCustomMovie() {
@@ -142,20 +157,6 @@
     updateButton();
   }
 
-  function removeMovie(title) {
-    selectedMovies.delete(title);
-    renderMoviePills();
-    renderMovies(document.getElementById("movieSearch").value);
-    updateButton();
-  }
-
-  function renderMoviePills() {
-    document.getElementById("selectedMoviePills").innerHTML = Array.from(selectedMovies).map(m => {
-      const safe = m.replace(/'/g, "\\'");
-      return `<span class="pill">${m} <button onclick="removeMovie('${safe}')">×</button></span>`;
-    }).join("");
-  }
-
   function addDate() {
     const val = document.getElementById("dateInput").value;
     if (!val) return;
@@ -164,15 +165,9 @@
     updateButton();
   }
 
-  function removeDate(d) {
-    selectedDates.delete(d);
-    renderDatePills();
-    updateButton();
-  }
-
   function renderDatePills() {
     document.getElementById("datePills").innerHTML = Array.from(selectedDates).sort().map(d =>
-      `<span class="pill">${d} <button onclick="removeDate('${d}')">×</button></span>`
+      `<span class="pill">${esc(d)} <button type="button" data-remove-date="${esc(d)}">×</button></span>`
     ).join("");
   }
 
@@ -182,7 +177,8 @@
     }
     const batchId = crypto.randomUUID();
     const rows = [];
-    for (const theatre_id of selectedTheatres) {
+    for (const idStr of selectedTheatres.keys()) {
+      const theatre_id = /^\d+$/.test(idStr) ? Number(idStr) : idStr;
       for (const movie_title of selectedMovies) {
         for (const target_date of selectedDates) {
           rows.push({ batch_id: batchId, theatre_id, movie_title, target_date, is_active: true });
@@ -208,8 +204,8 @@
     box.innerHTML = (data || []).map(w => `
       <div class="watch-item">
         <div>
-          <strong>${w.movie_title}</strong><br/>
-          <span style="color:#94a3b8">${w.theatres?.canonical_name || ""} • ${w.target_date}</span>
+          <strong>${esc(w.movie_title)}</strong><br/>
+          <span style="color:#94a3b8">${esc(w.theatres?.canonical_name || "")} • ${esc(w.target_date)}</span>
         </div>
         <button class="del-btn" onclick="deleteWatch(${w.id})">Stop</button>
       </div>
@@ -221,6 +217,50 @@
     loadActive();
   }
 
+  // Event listeners (reliable for any ID or special characters)
+  document.getElementById("theatreList").addEventListener("change", e => {
+    if (e.target.type !== "checkbox") return;
+    const id = e.target.dataset.id;
+    const name = e.target.dataset.name;
+    e.target.checked ? selectedTheatres.set(id, name) : selectedTheatres.delete(id);
+    renderTheatrePills();
+    updateButton();
+  });
+
+  document.getElementById("selectedTheatrePills").addEventListener("click", e => {
+    const id = e.target.dataset.removeTheatre;
+    if (!id) return;
+    selectedTheatres.delete(id);
+    renderTheatrePills();
+    renderTheatres(document.getElementById("theatreSearch").value);
+    updateButton();
+  });
+
+  document.getElementById("movieList").addEventListener("change", e => {
+    if (e.target.type !== "checkbox") return;
+    const title = e.target.dataset.title;
+    e.target.checked ? selectedMovies.add(title) : selectedMovies.delete(title);
+    renderMoviePills();
+    updateButton();
+  });
+
+  document.getElementById("selectedMoviePills").addEventListener("click", e => {
+    const title = e.target.dataset.removeMovie;
+    if (!title) return;
+    selectedMovies.delete(title);
+    renderMoviePills();
+    renderMovies(document.getElementById("movieSearch").value);
+    updateButton();
+  });
+
+  document.getElementById("datePills").addEventListener("click", e => {
+    const d = e.target.dataset.removeDate;
+    if (!d) return;
+    selectedDates.delete(d);
+    renderDatePills();
+    updateButton();
+  });
+
   async function init() {
     const [tRes, mRes] = await Promise.all([
       sb.from("theatres").select("*").order("canonical_name"),
@@ -231,6 +271,7 @@
     renderTheatres();
     renderMovies();
     loadActive();
+    updateButton();
 
     document.getElementById("theatreSearch").addEventListener("input", e => renderTheatres(e.target.value));
     document.getElementById("movieSearch").addEventListener("input", e => renderMovies(e.target.value));
