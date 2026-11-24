@@ -1,0 +1,5 @@
+playwright==1.49.1
+supabase>=2.15.0
+requests==2.32.3
+rapidfuzz==3.10.1
+python-dotenv==1.0.1

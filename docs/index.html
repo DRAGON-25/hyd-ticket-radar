@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Hyd Ticket Radar</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 16px; background: #0f172a; color: #f8fafc; max-width: 600px; margin-inline: auto; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 16px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+    label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 8px; }
+    input[type="text"], input[type="date"], select {
+      width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155;
+      background: #0f172a; color: #fff; font-size: 0.95rem;
+    }
+    .scroll-box { max-height: 190px; overflow-y: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px; padding: 6px; background: #0f172a; }
+    .check-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 0.9rem; font-weight: 400; margin: 0; cursor: pointer; }
+    .badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 99px; background: #334155; color: #cbd5e1; margin-left: auto; text-transform: uppercase; }
+    .pill-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill { background: #2563eb; padding: 5px 10px; border-radius: 99px; font-size: 0.82rem; display: flex; align-items: center; gap: 6px; }
+    .pill button { background: none; border: none; color: #fff; font-weight: bold; cursor: pointer; padding: 0; font-size: 1rem; line-height: 1; }
+    .row { display: flex; gap: 8px; margin-top: 8px; }
+    button.primary { width: 100%; padding: 13px; border: none; border-radius: 10px; background: #22c55e; color: #052e16; font-weight: 700; font-size: 1rem; cursor: pointer; }
+    button.secondary { padding: 10px 14px; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .watch-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.88rem; }
+    .del-btn { background: #ef4444; color: #fff; border: none; border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>Hyd Ticket Radar</h1>
+  <div class="sub">Parallel BookMyShow + District alerts</div>
+
+  <div class="card">
+    <label>1. City</label>
+    <select id="citySelect"><option value="Hyderabad">Hyderabad</option></select>
+  </div>
+
+  <div class="card">
+    <label>2. Select Theatres (Multi-Select)</label>
+    <input type="text" id="theatreSearch" placeholder="Search AMB, Prasads, Sandhya..." />
+    <div id="theatreList" class="scroll-box">Loading theatres...</div>
+  </div>
+
+  <div class="card">
+    <label>3. Select Movies (Multi-Select)</label>
+    <input type="text" id="movieSearch" placeholder="Search running or upcoming movies..." />
+    <div id="movieList" class="scroll-box">Loading movies...</div>
+    <div class="row">
+      <input type="text" id="customMovie" placeholder="Or type unlisted movie name..." />
+      <button class="secondary" onclick="addCustomMovie()">+ Add</button>
+    </div>
+    <div id="selectedMoviePills" class="pill-wrap"></div>
+  </div>
+
+  <div class="card">
+    <label>4. Select Dates (Multi-Select)</label>
+    <div class="row">
+      <input type="date" id="dateInput" />
+      <button class="secondary" onclick="addDate()">+ Add Date</button>
+    </div>
+    <div id="datePills" class="pill-wrap"></div>
+  </div>
+
+  <button class="primary" id="submitBtn" onclick="saveCombinations()">Start Watching (0 combinations)</button>
+
+  <div class="card" style="margin-top: 16px;">
+    <label>Active Watch Rules</label>
+    <div id="activeList">Loading...</div>
+  </div>
+
+<script>
+  const SUPABASE_URL = "https://wlzmiwsvrsjhsyisjrmg.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_be0DDrc-NeejOKJi_qX_xA_DBFtG9Hw";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let allTheatres = [];
+  let allMovies = [];
+  const selectedTheatres = new Set();
+  const selectedMovies = new Set();
+  const selectedDates = new Set();
+
+  function updateButton() {
+    const total = selectedTheatres.size * selectedMovies.size * selectedDates.size;
+    document.getElementById("submitBtn").textContent = `Start Watching (${total} combinations)`;
+  }
+
+  function renderTheatres(filter = "") {
+    const box = document.getElementById("theatreList");
+    const q = filter.toLowerCase();
+    box.innerHTML = allTheatres
+      .filter(t => t.canonical_name.toLowerCase().includes(q))
+      .map(t => `
+        <label class="check-row">
+          <input type="checkbox" ${selectedTheatres.has(t.id) ? "checked" : ""}
+            onchange="toggleTheatre(${t.id}, this.checked)" />
+          <span>${t.canonical_name}</span>
+          <span class="badge">${t.source}</span>
+        </label>
+      `).join("") || "<div style='padding:8px;color:#94a3b8'>No matching theatres</div>";
+  }
+
+  function renderMovies(filter = "") {
+    const box = document.getElementById("movieList");
+    const q = filter.toLowerCase();
+    box.innerHTML = allMovies
+      .filter(m => m.title.toLowerCase().includes(q))
+      .map(m => {
+        const safeTitle = m.title.replace(/'/g, "\\'");
+        return `
+          <label class="check-row">
+            <input type="checkbox" ${selectedMovies.has(m.title) ? "checked" : ""}
+              onchange="toggleMovie('${safeTitle}', this.checked)" />
+            <span>${m.title}</span>
+            <span class="badge">${m.status}</span>
+          </label>
+        `;
+      }).join("") || "<div style='padding:8px;color:#94a3b8'>No matching movies</div>";
+  }
+
+  function toggleTheatre(id, isChecked) {
+    isChecked ? selectedTheatres.add(id) : selectedTheatres.delete(id);
+    updateButton();
+  }
+
+  function toggleMovie(title, isChecked) {
+    isChecked ? selectedMovies.add(title) : selectedMovies.delete(title);
+    renderMoviePills();
+    updateButton();
+  }
+
+  function addCustomMovie() {
+    const input = document.getElementById("customMovie");
+    const val = input.value.trim();
+    if (!val) return;
+    selectedMovies.add(val);
+    input.value = "";
+    renderMoviePills();
+    updateButton();
+  }
+
+  function removeMovie(title) {
+    selectedMovies.delete(title);
+    renderMoviePills();
+    renderMovies(document.getElementById("movieSearch").value);
+    updateButton();
+  }
+
+  function renderMoviePills() {
+    document.getElementById("selectedMoviePills").innerHTML = Array.from(selectedMovies).map(m => {
+      const safe = m.replace(/'/g, "\\'");
+      return `<span class="pill">${m} <button onclick="removeMovie('${safe}')">×</button></span>`;
+    }).join("");
+  }
+
+  function addDate() {
+    const val = document.getElementById("dateInput").value;
+    if (!val) return;
+    selectedDates.add(val);
+    renderDatePills();
+    updateButton();
+  }
+
+  function removeDate(d) {
+    selectedDates.delete(d);
+    renderDatePills();
+    updateButton();
+  }
+
+  function renderDatePills() {
+    document.getElementById("datePills").innerHTML = Array.from(selectedDates).sort().map(d =>
+      `<span class="pill">${d} <button onclick="removeDate('${d}')">×</button></span>`
+    ).join("");
+  }
+
+  async function saveCombinations() {
+    if (!selectedTheatres.size || !selectedMovies.size || !selectedDates.size) {
+      return alert("Select at least 1 theatre, 1 movie, and 1 date.");
+    }
+    const batchId = crypto.randomUUID();
+    const rows = [];
+    for (const theatre_id of selectedTheatres) {
+      for (const movie_title of selectedMovies) {
+        for (const target_date of selectedDates) {
+          rows.push({ batch_id: batchId, theatre_id, movie_title, target_date, is_active: true });
+        }
+      }
+    }
+    const { error } = await sb.from("watchlists").upsert(rows, { onConflict: "theatre_id,movie_title,target_date" });
+    if (error) return alert("Error saving: " + error.message);
+    alert(`Saved ${rows.length} watch combination(s)!`);
+    loadActive();
+  }
+
+  async function loadActive() {
+    const today = new Date().toISOString().split("T")[0];
+    const { data } = await sb
+      .from("watchlists")
+      .select("id, movie_title, target_date, theatres(canonical_name)")
+      .eq("is_active", true)
+      .gte("target_date", today)
+      .order("target_date");
+
+    const box = document.getElementById("activeList");
+    box.innerHTML = (data || []).map(w => `
+      <div class="watch-item">
+        <div>
+          <strong>${w.movie_title}</strong><br/>
+          <span style="color:#94a3b8">${w.theatres?.canonical_name || ""} • ${w.target_date}</span>
+        </div>
+        <button class="del-btn" onclick="deleteWatch(${w.id})">Stop</button>
+      </div>
+    `).join("") || "<div style='color:#94a3b8'>No active alerts yet.</div>";
+  }
+
+  async function deleteWatch(id) {
+    await sb.from("watchlists").delete().eq("id", id);
+    loadActive();
+  }
+
+  async function init() {
+    const [tRes, mRes] = await Promise.all([
+      sb.from("theatres").select("*").order("canonical_name"),
+      sb.from("movies").select("*").order("release_date", { ascending: false })
+    ]);
+    allTheatres = tRes.data || [];
+    allMovies = mRes.data || [];
+    renderTheatres();
+    renderMovies();
+    loadActive();
+
+    document.getElementById("theatreSearch").addEventListener("input", e => renderTheatres(e.target.value));
+    document.getElementById("movieSearch").addEventListener("input", e => renderMovies(e.target.value));
+  }
+  init();
+</script>
+</body>
+</html>
